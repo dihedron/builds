@@ -1,153 +1,501 @@
 package main
 
 import (
-	"crypto/sha256"
-	"database/sql"
-	"encoding/base64"
-	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/dihedron/builds/model"
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
-	gorp "gopkg.in/gorp.v1"
 )
 
-// Deployment is the object representing a deployed
-// build.
-type Deployment struct {
-	ID          string `db:"id" form:"id" json:"id"`
-	Group       string `db:"group" form:"group" json:"group" binding:"required"`
-	Artifact    string `db:"artifact" form:"artifact" json:"artifact" binding:"required"`
-	Vers        string `db:"version" form:"version" json:"version" binding:"required"`
-	Environment string `db:"environment" form:"environment" json:"environment" binding:"required"`
-	Date        string `db:"date" form:"date" json:"date"`
-	Snapshot    bool   `db:"snapshot"`
-	Success     bool   `db:"success" form:"success" json:"success"`
-	System      string `db:"system" form:"system" json:"date"`
-	Builder     string `db:"builder" form:"builder" json:"builder"`
+type Link struct {
+	Relation string `json:"rel,omitempty"`
+	URI      string `json:"href,omitempty"`
 }
 
-// InitDB initialises the database and the DB mapper.
-func InitDB() (*gorp.DbMap, error) {
+func GetProducts(c *gin.Context) {
 
-	// load the SQLITE3 DB driver
-	db, err := sql.Open("sqlite3", "./builds.db")
-	if err != nil {
-		log.Printf("error loading database driver %q\n", err)
-		return nil, err
+	products, err := model.GetAllProducts()
+
+	type ProductInfo struct {
+		ID   string `json:"id,omitempty"`
+		Self Link   `json:"_link,omitempty"`
 	}
 
-	// open and test the connection
-	if err = db.Ping(); err != nil {
-		log.Printf("error connecting to database %q\n", err)
-		defer db.Close()
-		return nil, err
-	}
-
-	// create the ORM mapper
-	mapper := &gorp.DbMap{Db: db, Dialect: gorp.SqliteDialect{}}
-
-	// let the mapper initialise the table for us
-	// add a key as an hash
-
-	mapper.AddTableWithName(Deployment{}, "deployments").SetKeys(false, "id")
-
-	if err = mapper.CreateTablesIfNotExists(); err != nil {
-		log.Printf("error creating database table %q\n", err)
-		return nil, err
-	}
-	return mapper, nil
-}
-
-var mapper, _ = InitDB()
-
-// ReadDeployments returns a list of all known deployments.
-func ReadDeployments(context *gin.Context) {
-	var deployments []Deployment
-	if _, err := mapper.Select(&deployments, "select * from deployments order by id"); err != nil {
-		log.Printf("error selecting all deployments from the database %q\n", err)
-		context.String(http.StatusOK, "[]")
+	if err == nil && len(products) > 0 {
+		results := make([]ProductInfo, 0, len(products))
+		for _, product := range products {
+			results = append(results, ProductInfo{
+				ID: product.ID,
+				Self: Link{
+					Relation: "self",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID,
+				},
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"products": results})
 		return
 	}
-	content := gin.H{}
-	for k, v := range deployments {
-		content[strconv.Itoa(k)] = v
+
+	c.JSON(http.StatusOK, gin.H{"products": []ProductInfo{}})
+}
+
+func GetProduct(c *gin.Context) {
+	productId := c.Params.ByName("productId")
+
+	if productId == "" {
+		c.JSON(http.StatusBadRequest, nil)
+		return
 	}
-	context.JSON(200, content)
-}
 
-// DeleteDeployments deletes all known deployments.
-func DeleteDeployments(context *gin.Context) {
+	product, err := model.GetProductByID(productId)
 
-}
-
-// CreateDeployment inserts a new deployment into the database.
-func CreateDeployment(context *gin.Context) {
-	var deployment Deployment
-
-	context.Bind(&deployment) // This will infer what binder to use depending on the content-type header.
-
-	hasher := sha256.New()
-	hasher.Write([]byte(deployment.Group + deployment.Artifact + deployment.Environment + deployment.Environment))
-	deployment.ID = base64.URLEncoding.EncodeToString(hasher.Sum(nil))
-	deployment.Date = time.Now().Format("2006-01-02@15:04:05")
-	deployment.Snapshot = strings.HasSuffix(deployment.Vers, "SNAPSHOT")
-
-	if err := mapper.Insert(&deployment); err != nil {
-		log.Printf("error inserting new deployment %q\n", err)
+	type VersionInfo struct {
+		ID   string `json:"id,omitempty"`
+		Link Link   `json:"_link,omitempty"`
 	}
-	log.Printf("inserted with id: %q\n", deployment.ID)
 
-	/*
-		content := gin.H{
-			"result":  "Success",
-			"title":   article.Title,
-			"content": article.Content,
+	type ProductInfo struct {
+		ID          string        `json:"id,omitempty"`
+		Description string        `json:"description,omitempty"`
+		Links       []Link        `json:"_links,omitempty"`
+		Versions    []VersionInfo `json:"versions,omitempty"`
+	}
+
+	if err != nil || product.ID == "" {
+		c.JSON(http.StatusOK, gin.H{"product": ProductInfo{}})
+		return
+	}
+
+	var versions []VersionInfo
+	if len(product.Versions) > 0 {
+		versions = make([]VersionInfo, 0, 32)
+		for _, version := range product.Versions {
+			versions = append(versions, VersionInfo{
+				ID: version.ID,
+				Link: Link{
+					Relation: "self",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID,
+				},
+			})
 		}
-	*/
-	context.JSON(201, deployment)
-	/*
-		} else {
-			c.JSON(500, gin.H{"result": "An error occured"})
+	}
+
+	result := ProductInfo{
+		ID:          product.ID,
+		Description: product.Description,
+		Links: []Link{
+			{
+				Relation: "self",
+				URI:      "http://" + c.Request.Host + "/products/" + product.ID,
+			},
+			{
+				Relation: "collection",
+				URI:      "http://" + c.Request.Host + "/products",
+			},
+			{
+				Relation: "versions",
+				URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions",
+			},
+		},
+		Versions: versions,
+	}
+
+	c.JSON(http.StatusOK, gin.H{"product": result})
+}
+
+func GetVersions(c *gin.Context) {
+	productId := c.Params.ByName("productId")
+
+	if productId == "" {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	product, err := model.GetProductByID(productId)
+
+	// if no product found, return error code
+	if err != nil || product.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	type DeploymentInfo struct {
+		Order int  `json:"order"`
+		Link  Link `json:"_link,omitempty"`
+	}
+
+	type VersionInfo struct {
+		ID          string           `json:"id,omitempty"`
+		Links       []Link           `json:"_links,omitempty"`
+		Deployments []DeploymentInfo `json:"deployments,omitempty"`
+	}
+
+	var versions []VersionInfo
+
+	if len(product.Versions) > 0 {
+		versions = make([]VersionInfo, 0, 32)
+		for _, version := range product.Versions {
+
+			var deployments []DeploymentInfo
+			if len(version.Deployments) > 0 {
+				deployments = make([]DeploymentInfo, 0, 32)
+				for _, deployment := range version.Deployments {
+					deployments = append(deployments, DeploymentInfo{
+						Order: deployment.Order,
+						Link: Link{
+							Relation: "self",
+							URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments/" + strconv.Itoa(deployment.Order),
+						},
+					})
+				}
+			}
+			versions = append(versions, VersionInfo{
+				ID: version.ID,
+				Links: []Link{
+					{
+						Relation: "self",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID,
+					},
+					{
+						Relation: "collection",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions",
+					},
+					{
+						Relation: "product",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID,
+					},
+					{
+						Relation: "deployments",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments",
+					},
+				},
+				Deployments: deployments,
+			})
 		}
-	*/
+	}
+
+	c.JSON(http.StatusOK, gin.H{"versions": versions})
 }
 
-// ReadDeployment returns the representation of a deployment.
-func ReadDeployment(context *gin.Context) {
+func GetVersion(c *gin.Context) {
+	productId := c.Params.ByName("productId")
+	versionId := c.Params.ByName("versionId")
 
+	if productId == "" || versionId == "" {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	product, err := model.GetProductByID(productId)
+
+	// if no product found, return error code
+	if err != nil || product.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	version, err := model.GetVersionByID(productId, versionId)
+	if err != nil || version.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	type DeploymentInfo struct {
+		Order int  `json:"order"`
+		Link  Link `json:"_link,omitempty"`
+	}
+
+	type VersionInfo struct {
+		ID          string           `json:"id,omitempty"`
+		Description string           `json:"description,omitempty"`
+		Links       []Link           `json:"_links,omitempty"`
+		Deployments []DeploymentInfo `json:"deployments,omitempty"`
+	}
+
+	var deployments []DeploymentInfo
+	if len(version.Deployments) > 0 {
+		deployments = make([]DeploymentInfo, 0, 32)
+		for _, deployment := range version.Deployments {
+			deployments = append(deployments, DeploymentInfo{
+				Order: deployment.Order,
+				Link: Link{
+					Relation: "self",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments/" + strconv.Itoa(deployment.Order),
+				},
+			})
+		}
+	}
+	result := VersionInfo{
+		ID:          version.ID,
+		Description: version.Description,
+		Links: []Link{
+			{
+				Relation: "self",
+				URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID,
+			},
+			{
+				Relation: "collection",
+				URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions",
+			},
+			{
+				Relation: "product",
+				URI:      "http://" + c.Request.Host + "/products/" + product.ID,
+			},
+			{
+				Relation: "deployments",
+				URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments",
+			},
+		},
+		Deployments: deployments,
+	}
+
+	c.JSON(http.StatusOK, gin.H{"version": result})
 }
 
-// ReplaceDeployment completely replaces a given deployment with
-// user-supplied information.
-func ReplaceDeployment(context *gin.Context) {
+func GetDeployments(c *gin.Context) {
+	productId := c.Params.ByName("productId")
+	versionId := c.Params.ByName("versionId")
 
+	if productId == "" || versionId == "" {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	product, err := model.GetProductByID(productId)
+
+	// if no product found, return error code
+	if err != nil || product.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	version, err := model.GetVersionByID(productId, versionId)
+	if err != nil || version.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	type DeploymentInfo struct {
+		Order int    `json:"order"`
+		Links []Link `json:"_links,omitempty"`
+	}
+
+	var deployments []DeploymentInfo
+	if len(version.Deployments) > 0 {
+		deployments = make([]DeploymentInfo, 0, len(version.Deployments))
+	}
+
+	for _, deployment := range version.Deployments {
+		deployments = append(deployments, DeploymentInfo{
+			Order: deployment.Order,
+			Links: []Link{
+				{
+					Relation: "self",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments/" + strconv.Itoa(deployment.Order),
+				},
+				{
+					Relation: "collection",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments",
+				},
+				{
+					Relation: "version",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID,
+				},
+				{
+					Relation: "product",
+					URI:      "http://" + c.Request.Host + "/products/" + product.ID,
+				},
+			},
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deployments": deployments})
 }
 
-// UpdateDeployment patches the given deployment, updating its
-// contents with user-supplied data.
-func UpdateDeployment(context *gin.Context) {
+func GetDeployment(c *gin.Context) {
+	productId := c.Params.ByName("productId")
+	versionId := c.Params.ByName("versionId")
+	deploymentId := c.Params.ByName("deploymentId")
 
+	if productId == "" || versionId == "" || deploymentId == "" {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	product, err := model.GetProductByID(productId)
+
+	// if no product found, return error code
+	if err != nil || product.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	version, err := model.GetVersionByID(productId, versionId)
+	if err != nil || version.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	deployOrder, err := strconv.Atoi(deploymentId)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	for _, deployment := range version.Deployments {
+		if deployment.Order == deployOrder {
+			// found
+			type DeploymentInfo struct {
+				Order       int          `json:"order"`
+				Environment string       `json:"environment,omitempty"`
+				Status      model.Status `json:"status,omitempty"`
+				GrantedBy   string       `json:"grantedBy,omitempty"`
+				Timestamp   time.Time    `json:"timestamp,omitempty"`
+				Links       []Link       `json:"_links,omitempty"`
+			}
+
+			result := DeploymentInfo{
+				Order:       deployment.Order,
+				Environment: deployment.Environment,
+				Status:      deployment.Status,
+				GrantedBy:   deployment.GrantedBy,
+				Timestamp:   deployment.Timestamp,
+				Links: []Link{
+					{
+						Relation: "self",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments/" + strconv.Itoa(deployment.Order),
+					},
+					{
+						Relation: "collection",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID + "/deployments",
+					},
+					{
+						Relation: "version",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID + "/versions/" + version.ID,
+					},
+					{
+						Relation: "product",
+						URI:      "http://" + c.Request.Host + "/products/" + product.ID,
+					},
+				},
+			}
+
+			c.JSON(http.StatusOK, gin.H{"deployment": result})
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, nil)
 }
 
-// DeleteDeployment deletes a deployment from the database.
-func DeleteDeployment(context *gin.Context) {
+func ApproveDeployment(c *gin.Context) {
+	productId := c.Params.ByName("productId")
+	versionId := c.Params.ByName("versionId")
+	deploymentId := c.Params.ByName("deploymentId")
+
+	if productId == "" || versionId == "" || deploymentId == "" {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	product, err := model.GetProductByID(productId)
+
+	// if no product found, return error code
+	if err != nil || product.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	version, err := model.GetVersionByID(productId, versionId)
+	if err != nil || version.ID == "" {
+		c.JSON(http.StatusNotFound, nil)
+		return
+	}
+
+	deployOrder, err := strconv.Atoi(deploymentId)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	for _, deployment := range version.Deployments {
+		if deployment.Order == deployOrder {
+			deployment.Status = model.GRANTED
+			deployment.GrantedBy = "d093154" // TODO: use remote user for authenticated requests
+			deployment.Timestamp = time.Now()
+
+			model.UpdateDeployment(productId, versionId, deployment)
+
+			c.JSON(http.StatusAccepted, nil)
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, nil)
 
 }
 
 func main() {
+
 	router := gin.Default()
+	router.GET("/products", GetProducts)
+	router.GET("/products/:productId", GetProduct)
+	router.GET("/products/:productId/versions", GetVersions)
+	router.GET("/products/:productId/versions/:versionId", GetVersion)
+	router.GET("/products/:productId/versions/:versionId/deployments", GetDeployments)
+	router.GET("/products/:productId/versions/:versionId/deployments/:deploymentId", GetDeployment)
 
-	router.GET("/deployments", ReadDeployments)
-	router.DELETE("/deployments", DeleteDeployments)
-	router.POST("/deployments", CreateDeployment)
-	router.GET("/deployments/:id", ReadDeployment)
-	router.PUT("/deployments/:id", ReplaceDeployment)
-	router.PATCH("/deployments/:id", UpdateDeployment)
-	router.DELETE("/deployments/:id", DeleteDeployment)
+	router.GET("/products/:productId/versions/:versionId/deployments/:deploymentId/approve")
 
-	router.Run(":8080")
+	/*
+		// list all builds
+		router.GET("/builds", func(c *gin.Context) {
+			c.String(200, "pong")
+		})
+
+		// Ping test
+		router.GET("/ping", func(c *gin.Context) {
+			c.String(200, "pong")
+		})
+
+		// Get user value
+		router.GET("/user/:name", func(c *gin.Context) {
+			user := c.Params.ByName("name")
+			value, ok := DB[user]
+			if ok {
+				c.JSON(200, gin.H{"user": user, "value": value})
+			} else {
+				c.JSON(200, gin.H{"user": user, "status": "no value"})
+			}
+		})
+
+		// Authorized group (uses gin.BasicAuth() middleware)
+		// Same than:
+		// authorized := r.Group("/")
+		// authorized.Use(gin.BasicAuth(gin.Credentials{
+		//	  "foo":  "bar",
+		//	  "manu": "123",
+		//}))
+		authorized := router.Group("/", gin.BasicAuth(gin.Accounts{
+			"foo":  "bar", // user:foo password:bar
+			"manu": "123", // user:manu password:123
+		}))
+
+		authorized.POST("admin", func(c *gin.Context) {
+			user := c.MustGet(gin.AuthUserKey).(string)
+
+			// Parse JSON
+			var json struct {
+				Value string `json:"value" binding:"required"`
+			}
+
+			if c.Bind(&json) == nil {
+				DB[user] = json.Value
+				c.JSON(200, gin.H{"status": "ok"})
+			}
+		})
+	*/
+
+	// Listen and Server in 0.0.0.0:8080
+	router.Run(":9080")
 }

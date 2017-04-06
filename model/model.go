@@ -110,6 +110,7 @@ func init() {
 			{
 				ID:          "1.0.0",
 				Description: "for a changelog see http://prodinfo/gaia/1.0.0",
+				Description: "for a changelog see http://prodinfo/gaia/1.0.0",
 				Deployments: []Deployment{
 					{
 						Order:       0,

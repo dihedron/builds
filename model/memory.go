@@ -2,47 +2,6 @@ package model
 
 import "time"
 
-// Product represents a product.
-type Product struct {
-	ID          string    `json:"id,omitempty"`
-	Description string    `json:"descriptions,omitempty"`
-	Versions    []Version `json:"versions,omitempty"`
-}
-
-// Version represents a product version.
-type Version struct {
-	ID          string       `json:"id,omitempty"`
-	Description string       `json:"description,omitempty"`
-	Deployments []Deployment `json:"deployments,omitempty"`
-}
-
-// Status represents a Deployment request status.
-type Status int8
-
-const (
-	// PENDING deployment request.
-	PENDING Status = iota
-	// GRANTED deployment request, waiting for actuation.
-	GRANTED
-	// PERFORMED deployment request.
-	PERFORMED
-)
-
-// Deployment represents a potential deployment; it has an associated
-// authorisation request, encoded in the Status field, which can be pending,
-// or granted or performed (this last state might not be used).
-// Once the authorisation is granted, this resource assumes a secondary
-// representation in the form of AuthorisedDeployment, which can be used
-// to trigger a CI/CD pipeline into performing the necessary steps to deploy
-// the associated product/version onto the given environment.
-type Deployment struct {
-	Order       int       `json:"order,omitempty"`
-	Environment string    `json:"environment,omitempty"`
-	Status      Status    `json:"status,omitempty"`
-	GrantedBy   string    `json:"grantedBy,omitempty"`
-	Timestamp   time.Time `json:"timestamp,omitempty"`
-}
-
 func GetAllProducts() ([]Product, error) {
 	if len(model) == 0 {
 		return nil, ErrorNotFound

@@ -1,13 +1,79 @@
 package main
 
 import (
+	"fmt"
+	"github.com/dihedron/builds/model"
+)
+
+func main() {
+	fmt.Println("hallo, wworld!")
+
+	model.New("test.sqlite")
+	defer model.Close()
+
+	product := model.Product{
+		Code:        "gaia",
+		Name:        "G.A.I.A. - Servizi per il Personale",
+		Description: "GAIA è il portale web dei servizi aziendali non altrimenti disponibili su piattaforma SAP.",
+		Contact:     "fabio.angeli@bancaditalia.it",
+		Repository:  "https://gitlab.utenze.bankit.it/gaia",
+		WebSite:     "http://infogaia/",
+		Versions: []model.Version{
+			{
+				Code:        "1.0.0",
+				Description: "First major release, 1.0 series",
+				Repository:  "https://gitlab.utenze.bankit.it/gaia",
+				Branch:      "ver_1_0_0",
+			},
+			{
+				Code:        "1.0.1",
+				Description: "First bugfix release of the 1.0 series",
+				Branch:      "ver_1_0_1",
+			},
+		},
+	}
+	model.CreateProduct(&product)
+	fmt.Printf("product after save: %s\n", product)
+
+	product = model.Product{
+		Code:        "siparium",
+		Name:        "SIPARIUM - Sistema Integrato Processi Aziendali per le Risorse UMane",
+		Description: "GAIA è il portale web dei servizi aziendali per le risorse umane su piattaforma SAP.",
+		Contact:     "roberto iapichino@bancaditalia.it",
+		Repository:  "https://gitlab.utenze.bankit.it/siparium",
+		WebSite:     "http://portale-sap/",
+		Versions: []model.Version{
+			{
+				Code:        "1.0.0",
+				Description: "First major release, 1.0 series",
+				Repository:  "https://gitlab.utenze.bankit.it/siparium",
+				Branch:      "ver_1_0_0",
+			},
+			{
+				Code:        "1.0.1",
+				Description: "First bugfix release of the 1.0 series",
+				Branch:      "ver_1_0_1",
+			},
+		},
+	}
+	model.CreateProduct(&product)
+	fmt.Printf("product after save: %s\n", product)
+
+}
+
+/*
+import (
+	"flag"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/dihedron/builds/model"
 	"github.com/gin-gonic/gin"
 )
+
 
 type Link struct {
 	Relation string `json:"rel,omitempty"`
@@ -435,17 +501,40 @@ func ApproveDeployment(c *gin.Context) {
 
 }
 
+const DBPATH string = "./builds.db"
+
 func main() {
 
-	router := gin.Default()
-	router.GET("/products", GetProducts)
-	router.GET("/products/:productId", GetProduct)
-	router.GET("/products/:productId/versions", GetVersions)
-	router.GET("/products/:productId/versions/:versionId", GetVersion)
-	router.GET("/products/:productId/versions/:versionId/deployments", GetDeployments)
-	router.GET("/products/:productId/versions/:versionId/deployments/:deploymentId", GetDeployment)
+	mode := flag.String("mode", "server", "the application mode")
+	flag.Parse()
 
-	router.GET("/products/:productId/versions/:versionId/deployments/:deploymentId/approve")
+	switch *mode {
+	case "server":
+		router := gin.Default()
+		router.GET("/products", GetProducts)
+		router.GET("/products/:productId", GetProduct)
+		router.GET("/products/:productId/versions", GetVersions)
+		router.GET("/products/:productId/versions/:versionId", GetVersion)
+		router.GET("/products/:productId/versions/:versionId/deployments", GetDeployments)
+		router.GET("/products/:productId/versions/:versionId/deployments/:deploymentId", GetDeployment)
+		router.GET("/products/:productId/versions/:versionId/deployments/:deploymentId/approve")
+		// Listen and Server in 0.0.0.0:8080
+		router.Run(":9080")
+	case "client":
+		// open database if existing, otherwise create one
+		if _, err := os.Stat(DBPATH); err != nil {
+			if os.IsNotExist(err) {
+				// database does not exist, create one
+				model.New(DBPATH)
+			} else {
+				log.Printf("error checking for database: %v\n", err)
+				return
+			}
+		} else {
+			// file exists
+			model.Load(DBPATH)
+		}
+	}
 
 	/*
 		// list all builds
@@ -494,8 +583,7 @@ func main() {
 				c.JSON(200, gin.H{"status": "ok"})
 			}
 		})
-	*/
 
-	// Listen and Server in 0.0.0.0:8080
-	router.Run(":9080")
+
 }
+*/
